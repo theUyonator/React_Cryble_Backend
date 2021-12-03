@@ -154,32 +154,53 @@ class User {
    */
 
   static async update(username, data) {
-    if (data.password) {
-      data.password = await bcrypt.hash(data.password, BCRYPT_WORK_FACTOR);
+
+    const existingAcct = await db.query(
+      `SELECT username,
+              password,
+              first_name AS "firstName",
+              last_name AS "lastName",
+              email
+       FROM users
+       WHERE username = $1`,
+    [username],
+    );
+
+    const existingUser = existingAcct.rows[0];
+
+    if (existingUser && data.password) {
+      const isValid = await bcrypt.compare(data.password, existingUser.password);
+      if (isValid === true) {
+        delete data.password;
+
+      const { setCols, values } = sqlForPartialUpdate(
+          data,
+          {
+            firstName: "first_name",
+            lastName: "last_name",
+          });
+      const usernameVarIdx = "$" + (values.length + 1);
+  
+      const querySql = `UPDATE users 
+                        SET ${setCols} 
+                        WHERE username = ${usernameVarIdx} 
+                        RETURNING username,
+                                  first_name AS "firstName",
+                                  last_name AS "lastName",
+                                  email`;
+      const result = await db.query(querySql, [...values, username]);
+      const user = result.rows[0];
+  
+      if (!user) throw new NotFoundError(`No user: ${username}`);
+  
+      delete user.password;
+      return user;
+      }
+
+      throw new UnauthorizedError("Invalid username/password");
     }
-
-    const { setCols, values } = sqlForPartialUpdate(
-        data,
-        {
-          firstName: "first_name",
-          lastName: "last_name",
-        });
-    const usernameVarIdx = "$" + (values.length + 1);
-
-    const querySql = `UPDATE users 
-                      SET ${setCols} 
-                      WHERE username = ${usernameVarIdx} 
-                      RETURNING username,
-                                first_name AS "firstName",
-                                last_name AS "lastName",
-                                email`;
-    const result = await db.query(querySql, [...values, username]);
-    const user = result.rows[0];
-
-    if (!user) throw new NotFoundError(`No user: ${username}`);
-
-    delete user.password;
-    return user;
+    throw new UnauthorizedError("Invalid username/password");
+    
   }
 
   /** Delete given user from database; returns undefined. */
